@@ -1,0 +1,8 @@
+*.o
+*.out
+particle_sim
+
+data/
+
+*~
+*.swp

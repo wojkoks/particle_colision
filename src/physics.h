@@ -8,18 +8,18 @@ typedef struct
 
 typedef struct
 {
-    Vec2 pos;      // position in pixels
-    Vec2 vel;      // velocity in px/s
-    float radius;  // radius in px
-    float mass;    // mass
-    Uint8 r, g, b; // color
+    Vec2 pos;
+    Vec2 vel;
+    float radius;
+    float mass;
+    Uint8 r, g, b;
 } Particle;
 
 typedef struct
 {
     int width, height;
-    int count;   // current number of particles
-    Particle *p; // array of particles (size >= count)
+    int count;
+    Particle *p;
 } World;
 
 void world_init(World *w, int width, int height, int count, unsigned seed,

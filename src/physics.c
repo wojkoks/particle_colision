@@ -28,6 +28,18 @@ void world_init(World *w, int width, int height, int count, unsigned seed, int r
         w->p[i].g = rand() % 256;
         w->p[i].b = rand() % 256;
     }
+    
+    // Debug: calculate velocity stats
+    float vel_sum = 0, vel_max = 0, vel_min = 999;
+    for (int i = 0; i < count; i++)
+    {
+        float speed = sqrtf(w->p[i].vel.x * w->p[i].vel.x + w->p[i].vel.y * w->p[i].vel.y);
+        vel_sum += speed;
+        if (speed > vel_max) vel_max = speed;
+        if (speed < vel_min) vel_min = speed;
+    }
+    printf("[OMP] Velocity stats: avg=%.2f min=%.2f max=%.2f (expected_max=%.2f)\n", 
+           vel_sum / count, vel_min, vel_max, max_speed * 1.414f);
 }
 
 void world_free(World *w)

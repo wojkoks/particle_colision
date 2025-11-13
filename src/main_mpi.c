@@ -53,14 +53,14 @@ int main(int argc, char *argv[])
                 world_mpi_step(&world, 1.0f / 120.0f);
             }
 
-            // Synchronizuj z innymi
-            MPI_Barrier(world.cart_comm);
-
-            // Uczestniczą w gather (nawet jeśli nie rysują)
-            Particle *dummy = NULL;
-            int dummy_count = 0;
-            world_mpi_gather_to_root(&world, &dummy, &dummy_count);
-            if (dummy != NULL) free(dummy);
+            // Zbierz co 2 klatki (mniej transferu danych)
+            if (frame % 2 == 0)
+            {
+                Particle *dummy = NULL;
+                int dummy_count = 0;
+                world_mpi_gather_to_root(&world, &dummy, &dummy_count);
+                if (dummy != NULL) free(dummy);
+            }
 
             // Debug output every 120 frames
             frame++;
@@ -157,46 +157,57 @@ int main(int argc, char *argv[])
             world_mpi_step(&world, 1.0f / 120.0f);
         }
 
-        // === SYNCHRONIZACJA (wszyscy procesy) ===
-        MPI_Barrier(world.cart_comm);
+        // === BRAK MPI_Barrier - procesy nie czekają na siebie ===
+        // (MPI_Barrier usuwaliliśmy - zbyt dużo opóźnia)
 
-        // === Zbierz cząstki do rysowania ===
-        Particle *all_particles = NULL;
-        int total_particles = 0;
-        world_mpi_gather_to_root(&world, &all_particles, &total_particles);
-
-        // === Rysuj (tylko proces 0) ===
-        if (rank == 0)
+        // === Zbierz cząstki do rysowania (co 2 klatki) ===
+        if (frame % 2 == 0)
         {
-            SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-            SDL_RenderClear(ren);
+            Particle *all_particles = NULL;
+            int total_particles = 0;
+            world_mpi_gather_to_root(&world, &all_particles, &total_particles);
 
-            for (int i = 0; i < total_particles; i++)
+            // === Rysuj (tylko proces 0) ===
+            if (rank == 0)
             {
-                Particle *p = &all_particles[i];
-                SDL_SetRenderDrawColor(ren, p->r, p->g, p->b, 255);
-                draw_filled_circle(ren, (int)p->pos.x, (int)p->pos.y, (int)p->radius);
+                SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+                SDL_RenderClear(ren);
+
+                for (int i = 0; i < total_particles; i++)
+                {
+                    Particle *p = &all_particles[i];
+                    SDL_SetRenderDrawColor(ren, p->r, p->g, p->b, 255);
+                    draw_filled_circle(ren, (int)p->pos.x, (int)p->pos.y, (int)p->radius);
+                }
+
+                // Rysuj linie gridu (podziały między procesami)
+                draw_grid(ren, width, height, world.dims[1], world.dims[0]);
+
+                SDL_RenderPresent(ren);
+
+                // FPS control - zmniejszone z 8ms na 2ms
+                SDL_Delay(2);
+
+                // Debug info
+                if (frame % 120 == 0)
+                {
+                    printf("[MPI] Frame %d | Total: %d | Rank 0: %d\n", 
+                           frame, total_particles, world.particle_count);
+                }
             }
 
-            // Rysuj linie gridu (podziały między procesami)
-            draw_grid(ren, width, height, world.dims[1], world.dims[0]);
-
-            SDL_RenderPresent(ren);
-
-            // FPS control
-            SDL_Delay(8);  // ~120 FPS
-
-            // Debug info - print ALL ranks
-            frame++;
-            if (frame % 120 == 0)
-            {
-                printf("[MPI] Frame %d | Total: %d | Rank 0: %d\n", 
-                       frame, total_particles, world.particle_count);
-            }
+            if (all_particles != NULL)
+                free(all_particles);
+        }
+        else
+        {
+            // Na parzystych klatkach: pomiń gather, ale nie blokuj procesów
+            if (rank == 0)
+                SDL_Delay(1);  // Lekki delay by nie busy-loop
         }
 
-        if (all_particles != NULL)
-            free(all_particles);
+        frame++;
+
     }
 
     // === Cleanup ===

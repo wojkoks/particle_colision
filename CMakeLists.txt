@@ -20,5 +20,5 @@ include_directories(${SDL2_INCLUDE_DIRS})
 # Link OpenMP executable
 target_link_libraries(particles ${SDL2_LIBRARIES} OpenMP::OpenMP_C -lm)
 
-# Link MPI executable
-target_link_libraries(particles_mpi ${SDL2_LIBRARIES} MPI::MPI_C -lm)
+# Link MPI executable with OpenMP support
+target_link_libraries(particles_mpi ${SDL2_LIBRARIES} MPI::MPI_C OpenMP::OpenMP_C -lm)

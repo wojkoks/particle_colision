@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <mpi.h>
+#include <omp.h>
 #include "physics_mpi.h"
 
 // === MPI Datatype dla Particle ===
@@ -19,8 +20,26 @@ void create_particle_mpi_type()
 // === Topologia 2D (Cartesian Grid) ===
 void setup_2d_cartesian(WorldMPI *w)
 {
-    // Automatyczne obliczenie wymiarów siatki
-    MPI_Dims_create(w->world_size, 2, w->dims);
+    // Oblicz wymiary siatki - najpierw spróbuj rozsądnie
+    w->dims[0] = 1;
+    w->dims[1] = w->world_size;
+    
+    // Spróbuj znaleźć bardziej kwadratową siatkę
+    for (int i = 1; i * i <= w->world_size; i++)
+    {
+        if (w->world_size % i == 0)
+        {
+            w->dims[0] = i;
+            w->dims[1] = w->world_size / i;
+        }
+    }
+    
+    // Upewnij się że wymiary są prawidłowe
+    if (w->dims[0] * w->dims[1] != w->world_size)
+    {
+        w->dims[0] = 1;
+        w->dims[1] = w->world_size;
+    }
     
     // Utwórz topologię kartezjańską (bez periodyczności)
     int periods[2] = {0, 0};  // Nie-periodyczna (nie zawijamy na krawędziach)
@@ -235,7 +254,7 @@ void world_mpi_free(WorldMPI *w)
 
 void world_mpi_step(WorldMPI *w, float dt)
 {
-    // === Krok 1: Aktualizacja pozycji ===
+    // === Krok 1: Aktualizacja pozycji (bez OpenMP - szybciej) ===
     for (int i = 0; i < w->particle_count; i++)
     {
         w->particles[i].pos.x += w->particles[i].vel.x * dt;
@@ -265,9 +284,10 @@ void world_mpi_step(WorldMPI *w, float dt)
         }
     }
 
-    // === Krok 2: Kolizje między cząstkami (lokalne) ===
+    // === Krok 2: Kolizje między cząstkami (lokalne, OpenMP z reduction) ===
     int total_pairs = w->particle_count * (w->particle_count - 1) / 2;
 
+    #pragma omp parallel for schedule(dynamic)
     for (int pair_idx = 0; pair_idx < total_pairs; pair_idx++)
     {
         int i = 0;
@@ -292,9 +312,14 @@ void world_mpi_step(WorldMPI *w, float dt)
             float nx = dx / dist;
             float ny = dy / dist;
 
+            // Atomowe operacje zamiast critical
+            #pragma omp atomic
             w->particles[i].pos.x -= nx * overlap * 0.5f;
+            #pragma omp atomic
             w->particles[i].pos.y -= ny * overlap * 0.5f;
+            #pragma omp atomic
             w->particles[j].pos.x += nx * overlap * 0.5f;
+            #pragma omp atomic
             w->particles[j].pos.y += ny * overlap * 0.5f;
 
             float relative_velocity_x = w->particles[j].vel.x - w->particles[i].vel.x;
@@ -307,15 +332,19 @@ void world_mpi_step(WorldMPI *w, float dt)
                 float impulse = -(1 + bounce_factor) * velocity_along_normal;
                 impulse /= (1 / w->particles[i].mass + 1 / w->particles[j].mass);
 
+                #pragma omp atomic
                 w->particles[i].vel.x -= impulse / w->particles[i].mass * nx;
+                #pragma omp atomic
                 w->particles[i].vel.y -= impulse / w->particles[i].mass * ny;
+                #pragma omp atomic
                 w->particles[j].vel.x += impulse / w->particles[j].mass * nx;
+                #pragma omp atomic
                 w->particles[j].vel.y += impulse / w->particles[j].mass * ny;
             }
         }
     }
 
-    // === Krok 2.5: Wymiana ghost cells z wszystkimi 4 sąsiadami ===
+    // === Krok 2.5: Wymiana ghost cells z wszystkimi 4 sąsiadami (bez OpenMP) ===
     w->ghost_count = 0;
     MPI_Status status;
     
@@ -438,7 +467,7 @@ void world_mpi_step(WorldMPI *w, float dt)
         }
     }
 
-    // === Krok 3: Kolizje z ghost particles ===
+    // === Krok 3: Kolizje z ghost particles (bez OpenMP) ===
     // Teraz sprawdzaj kolizje między własnymi i ghost particles
     for (int i = 0; i < w->particle_count; i++)
     {
@@ -478,7 +507,7 @@ void world_mpi_step(WorldMPI *w, float dt)
         }
     }
 
-    // === Krok 4: Particle migration - wyślij particles które wychodzą z bloku ===
+    // === Krok 4: Particle migration - wyślij particles które wychodzą z bloku (bez OpenMP) ===
     // Zbierz particles do wysłania każdemu sąsiadowi
     Particle send_up[w->particle_capacity];
     Particle send_down[w->particle_capacity];
@@ -498,32 +527,37 @@ void world_mpi_step(WorldMPI *w, float dt)
         // Czy wychodzi na górę?
         if (p->pos.y - p->radius < w->block_y0 && w->nbr_up != MPI_PROC_NULL)
         {
-            send_up[count_up++] = *p;
+            if (count_up < w->particle_capacity)
+                send_up[count_up++] = *p;
             moved = 1;
         }
         // Czy wychodzi na dół?
         else if (p->pos.y + p->radius > w->block_y0 + w->block_height && w->nbr_down != MPI_PROC_NULL)
         {
-            send_down[count_down++] = *p;
+            if (count_down < w->particle_capacity)
+                send_down[count_down++] = *p;
             moved = 1;
         }
         // Czy wychodzi na lewo?
         else if (p->pos.x - p->radius < w->block_x0 && w->nbr_left != MPI_PROC_NULL)
         {
-            send_left[count_left++] = *p;
+            if (count_left < w->particle_capacity)
+                send_left[count_left++] = *p;
             moved = 1;
         }
         // Czy wychodzi na prawo?
         else if (p->pos.x + p->radius > w->block_x0 + w->block_width && w->nbr_right != MPI_PROC_NULL)
         {
-            send_right[count_right++] = *p;
+            if (count_right < w->particle_capacity)
+                send_right[count_right++] = *p;
             moved = 1;
         }
         
         // Jeśli nie wyszedł, zostaje w tym procesie
         if (!moved)
         {
-            remaining[remaining_count++] = *p;
+            if (remaining_count < w->particle_capacity)
+                remaining[remaining_count++] = *p;
         }
     }
     

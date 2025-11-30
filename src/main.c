@@ -4,6 +4,7 @@
 #include <time.h>
 #include "physics.h"
 #include "draw.h"
+#include <omp.h>
 
 int main()
 {
@@ -15,7 +16,18 @@ int main()
     int radius_max = 8;
     unsigned seed = (unsigned)time(NULL);
 
+<<<<<<< HEAD
     SDL_Init(SDL_INIT_VIDEO);
+=======
+    printf("OpenMP threads: %d\n", omp_get_max_threads());
+
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
+    {
+        fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
+        return 1;
+    }
+
+>>>>>>> upstream/main
     SDL_Window *win = SDL_CreateWindow("Symulacja cząstek 2D", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN);
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
 

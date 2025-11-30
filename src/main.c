@@ -5,13 +5,6 @@
 #include "physics.h"
 #include "draw.h"
 
-typedef struct
-{
-    int quit;
-    SDL_Event event;
-
-} LoopParams;
-
 int main()
 {
     int width = 800;
@@ -22,30 +15,9 @@ int main()
     int radius_max = 8;
     unsigned seed = (unsigned)time(NULL);
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
-    {
-        fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
-        return 1;
-    }
-
+    SDL_Init(SDL_INIT_VIDEO);
     SDL_Window *win = SDL_CreateWindow("Symulacja cząstek 2D", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN);
-    if (win == NULL)
-    {
-        fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
-
-    Uint32 render_flags = SDL_RENDERER_ACCELERATED;
-
-    SDL_Renderer *ren = SDL_CreateRenderer(win, -1, render_flags);
-    if (ren == NULL)
-    {
-        fprintf(stderr, "SDL_CreateRenderer Error: %s\n", SDL_GetError());
-        SDL_DestroyWindow(win);
-        SDL_Quit();
-        return 1;
-    }
+    SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
 
     World world;
     world_init(&world, width, height, particle_count, seed, radius_min, radius_max, max_speed);
@@ -78,7 +50,7 @@ int main()
                 world_reset(&world, (unsigned)time(NULL));
                 break;
             case SDLK_UP:
-                if (world.count < 500)
+                if (world.count < 5000)
                 {
                     world_free(&world);
                     world_init(&world, width, height, world.count + 10,

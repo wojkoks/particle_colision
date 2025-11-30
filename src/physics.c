@@ -41,10 +41,8 @@ void world_reset(World *w, unsigned seed)
     int rmin = 3;
     int rmax = 8;
 
-    // Free current particles
     world_free(w);
 
-    // Reinitialize with same parameters but new seed
     world_init(w, width, height, count, seed, rmin, rmax, max_speed);
 }
 

@@ -1,5 +1,9 @@
 #pragma once
-#include <SDL2/SDL.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct
 {
@@ -12,7 +16,10 @@ typedef struct
     Vec2 vel;
     float radius;
     float mass;
-    Uint8 r, g, b;
+    uint8_t r, g, b;
+    int has_stick;      // 1 if particle carries a stick
+    float stick_len;    // length of stick
+    float stick_angle;  // radians, direction of stick
 } Particle;
 
 typedef struct
@@ -27,3 +34,11 @@ void world_init(World *w, int width, int height, int count, unsigned seed,
 void world_free(World *w);
 void world_reset(World *w, unsigned seed);
 void world_step(World *w, float dt);
+
+#ifdef USE_CUDA
+void world_cuda_release(void);
+#endif
+
+#ifdef __cplusplus
+}
+#endif

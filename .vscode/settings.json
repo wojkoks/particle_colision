@@ -4,5 +4,5 @@
         "sdl_main.h": "c",
         "close_code.h": "c"
     },
-    "cmake.sourceDirectory": "/root/programowanie/particle_colision/ai_implementation/particle_collision"
+    "cmake.sourceDirectory": "/root/programowanie/particle_colision"
 }

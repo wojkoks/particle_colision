@@ -3,3 +3,4 @@
 
 void draw_filled_circle(SDL_Renderer *r, int cx, int cy, int radius);
 void draw_grid(SDL_Renderer *r, int width, int height, int cols, int rows);
+void draw_text(SDL_Renderer *r, int x, int y, const char *text, int scale, SDL_Color color);

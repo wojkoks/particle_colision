@@ -1,12 +1,65 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <SDL2/SDL.h>
 #include "physics.h"
 
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+
+static inline void resolve_stick_circle(Particle *owner, Particle *target, float eps_dist)
+{
+    if (!owner->has_stick || owner->stick_len <= 0.0f)
+        return;
+
+    float nx = cosf(owner->stick_angle);
+    float ny = sinf(owner->stick_angle);
+    float sx0 = owner->pos.x + nx * owner->radius;
+    float sy0 = owner->pos.y + ny * owner->radius;
+    float sx1 = sx0 + nx * owner->stick_len;
+    float sy1 = sy0 + ny * owner->stick_len;
+
+    float vx = sx1 - sx0;
+    float vy = sy1 - sy0;
+    float seg_len2 = vx * vx + vy * vy;
+    if (seg_len2 < eps_dist) return;
+    float tx = target->pos.x - sx0;
+    float ty = target->pos.y - sy0;
+    float t = (tx * vx + ty * vy) / seg_len2;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    float closest_x = sx0 + t * vx;
+    float closest_y = sy0 + t * vy;
+
+    float dx = target->pos.x - closest_x;
+    float dy = target->pos.y - closest_y;
+    float dist2 = dx * dx + dy * dy;
+    float rad = target->radius;
+    if (dist2 >= rad * rad) return;
+    float dist = sqrtf(dist2 + eps_dist);
+    float overlap = rad - dist;
+    float cnx = dx / dist;
+    float cny = dy / dist;
+
+    target->pos.x += cnx * overlap;
+    target->pos.y += cny * overlap;
+    owner->pos.x -= cnx * overlap * 0.25f;
+    owner->pos.y -= cny * overlap * 0.25f;
+
+    float rvx = target->vel.x - owner->vel.x;
+    float rvy = target->vel.y - owner->vel.y;
+    float vel_along_normal = rvx * cnx + rvy * cny;
+    if (vel_along_normal > 0) return;
+    float restitution = 1.0f;
+    float inv_mass_owner = 1.0f / owner->mass;
+    float inv_mass_target = 1.0f / target->mass;
+    float impulse = -(1.0f + restitution) * vel_along_normal;
+    impulse /= (inv_mass_owner + inv_mass_target);
+    owner->vel.x -= impulse * inv_mass_owner * cnx;
+    owner->vel.y -= impulse * inv_mass_owner * cny;
+    target->vel.x += impulse * inv_mass_target * cnx;
+    target->vel.y += impulse * inv_mass_target * cny;
+}
 
 void world_init(World *w, int width, int height, int count, unsigned seed, int rmin, int rmax, float max_speed)
 {
@@ -27,6 +80,9 @@ void world_init(World *w, int width, int height, int count, unsigned seed, int r
         w->p[i].r = rand() % 256;
         w->p[i].g = rand() % 256;
         w->p[i].b = rand() % 256;
+        w->p[i].has_stick = (i % 10 == 0) ? 1 : 0; // co 10-ta cząstka ma kij
+        w->p[i].stick_len = w->p[i].has_stick ? w->p[i].radius * 2.0f : 0.0f;
+        w->p[i].stick_angle = 0.0f;
     }
     
     // Debug: calculate velocity stats
@@ -38,7 +94,7 @@ void world_init(World *w, int width, int height, int count, unsigned seed, int r
         if (speed > vel_max) vel_max = speed;
         if (speed < vel_min) vel_min = speed;
     }
-    printf("[OMP] Velocity stats: avg=%.2f min=%.2f max=%.2f (expected_max=%.2f)\n", 
+    printf("[INIT] Velocity stats: avg=%.2f min=%.2f max=%.2f (expected_max=%.2f)\n",
            vel_sum / count, vel_min, vel_max, max_speed * 1.414f);
 }
 
@@ -46,6 +102,10 @@ void world_free(World *w)
 {
     free(w->p);
     w->p = NULL;
+
+#ifdef USE_CUDA
+    world_cuda_release();
+#endif
 }
 
 void world_reset(World *w, unsigned seed)
@@ -62,14 +122,25 @@ void world_reset(World *w, unsigned seed)
     world_init(w, width, height, count, seed, rmin, rmax, max_speed);
 }
 
+#ifndef USE_CUDA
 void world_step(World *w, float dt)
 {
+    const float eps_vel = 1e-4f;
+    const float eps_dist = 1e-5f;
+
     // === OPENMP: Równoległa aktualizacja pozycji i kolizji ze ścianami ===
     #pragma omp parallel for schedule(static)
     for (int i = 0; i < w->count; i++)
     {
         w->p[i].pos.x += w->p[i].vel.x * dt;
         w->p[i].pos.y += w->p[i].vel.y * dt;
+
+        // aktualizacja kąta kija: kierunek prędkości
+        float speed2 = w->p[i].vel.x * w->p[i].vel.x + w->p[i].vel.y * w->p[i].vel.y;
+        if (w->p[i].has_stick && speed2 > eps_vel)
+        {
+            w->p[i].stick_angle = atan2f(w->p[i].vel.y, w->p[i].vel.x);
+        }
 
         // Wall collision - lepsze: clamp pozycję + odbij prędkość
         // Lewa/prawa ściana
@@ -120,19 +191,18 @@ void world_step(World *w, float dt)
         float dist2 = dx * dx + dy * dy;
         float radius_sum = w->p[i].radius + w->p[j].radius;
 
-        if (dist2 < radius_sum * radius_sum)
+        #pragma omp critical
         {
-            // Simple elastic collision response
-            float dist = sqrtf(dist2);
-            float overlap = radius_sum - dist;
-
-            // Move particles apart
-            float nx = dx / dist;
-            float ny = dy / dist;
-            
-            // === CRITICAL SECTION: Atomowe operacje na pozycjach cząstek ===
-            #pragma omp critical
+            if (dist2 < radius_sum * radius_sum)
             {
+                // Simple elastic collision response
+                float dist = sqrtf(dist2);
+                float overlap = radius_sum - dist;
+
+                // Move particles apart
+                float nx = dx / dist;
+                float ny = dy / dist;
+
                 w->p[i].pos.x -= nx * overlap * 0.5f;
                 w->p[i].pos.y -= ny * overlap * 0.5f;
                 w->p[j].pos.x += nx * overlap * 0.5f;
@@ -156,6 +226,11 @@ void world_step(World *w, float dt)
                     w->p[j].vel.y += impulse / w->p[j].mass * ny;
                 }
             }
+
+            // kij vs kula w obu kierunkach
+            resolve_stick_circle(&w->p[i], &w->p[j], eps_dist);
+            resolve_stick_circle(&w->p[j], &w->p[i], eps_dist);
         }
     }
 }
+#endif

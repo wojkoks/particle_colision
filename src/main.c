@@ -4,19 +4,31 @@
 #include <time.h>
 #include "physics.h"
 #include "draw.h"
+
+#ifdef _OPENMP
 #include <omp.h>
+#endif
 
 int main()
 {
     int width = 800;
     int height = 600;
-    int particle_count = 120;
+    int particle_count = 1000;
     float max_speed = 120.0f;
     int radius_min = 3;
     int radius_max = 8;
     unsigned seed = (unsigned)time(NULL);
+    Uint32 fps_timer = SDL_GetTicks();
+    int fps_frames = 0;
+    float fps = 0.0f;
 
+#ifdef USE_CUDA
+    printf("CUDA build: GPU acceleration włączone\n");
+#elif defined(_OPENMP)
     printf("OpenMP threads: %d\n", omp_get_max_threads());
+#else
+    printf("Buduję bez OpenMP: tryb jednordzeniowy CPU\n");
+#endif
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
@@ -88,7 +100,33 @@ int main()
             Particle *p = &world.p[i];
             SDL_SetRenderDrawColor(ren, p->r, p->g, p->b, 255);
             draw_filled_circle(ren, (int)p->pos.x, (int)p->pos.y, (int)p->radius);
+            if (p->has_stick)
+            {
+                float nx = cosf(p->stick_angle);
+                float ny = sinf(p->stick_angle);
+                int x0 = (int)(p->pos.x + nx * p->radius);
+                int y0 = (int)(p->pos.y + ny * p->radius);
+                int x1 = (int)(x0 + nx * p->stick_len);
+                int y1 = (int)(y0 + ny * p->stick_len);
+                SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+                SDL_RenderDrawLine(ren, x0, y0, x1, y1);
+            }
         }
+
+        // FPS counter (liczony co ~1s)
+        fps_frames++;
+        Uint32 now = SDL_GetTicks();
+        if (now - fps_timer >= 1000)
+        {
+            fps = (float)fps_frames * 1000.0f / (float)(now - fps_timer);
+            fps_frames = 0;
+            fps_timer = now;
+        }
+        char fps_text[32];
+        snprintf(fps_text, sizeof(fps_text), "FPS %.1f", fps);
+        SDL_Color white = {255, 255, 255, 255};
+        draw_text(ren, 10, 10, fps_text, 2, white);
+
         SDL_RenderPresent(ren);
     }
 

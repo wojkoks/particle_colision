@@ -100,17 +100,6 @@ int main()
             Particle *p = &world.p[i];
             SDL_SetRenderDrawColor(ren, p->r, p->g, p->b, 255);
             draw_filled_circle(ren, (int)p->pos.x, (int)p->pos.y, (int)p->radius);
-            if (p->has_stick)
-            {
-                float nx = cosf(p->stick_angle);
-                float ny = sinf(p->stick_angle);
-                int x0 = (int)(p->pos.x + nx * p->radius);
-                int y0 = (int)(p->pos.y + ny * p->radius);
-                int x1 = (int)(x0 + nx * p->stick_len);
-                int y1 = (int)(y0 + ny * p->stick_len);
-                SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
-                SDL_RenderDrawLine(ren, x0, y0, x1, y1);
-            }
         }
 
         // FPS counter (liczony co ~1s)
